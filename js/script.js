@@ -14,6 +14,10 @@
 
 document.addEventListener('DOMContentLoaded', () => {
 
+  document.querySelectorAll('[data-current-year]').forEach(year => {
+    year.textContent = new Date().getFullYear().toString();
+  });
+
   // ==========================================
   // 1. NAVBAR
   // ==========================================
@@ -101,24 +105,34 @@ document.addEventListener('DOMContentLoaded', () => {
   const projectItems = document.querySelectorAll('.project-item');
   const projectVideos = document.querySelectorAll('.project-video');
   const projectLayout = document.querySelector('.projects-layout');
-  const projectDisplay = document.querySelector('.projects-display');
   const browserContent = document.querySelector('.projects-display .browser-content');
+  const previewVideos = document.querySelectorAll('.project-video, .project-card-video video');
+  let playingVideo = null;
+  let videoObserver = null;
 
   const playVideo = video => {
+    previewVideos.forEach(otherVideo => {
+      if (otherVideo !== video) otherVideo.pause();
+    });
+
     video.muted = true;
     video.defaultMuted = true;
     video.playsInline = true;
+    playingVideo = video;
+
     const playRequest = video.play();
-    if (playRequest) {
-      playRequest.catch(() => {
-        video.controls = true;
-      });
-    }
+    if (playRequest) playRequest.catch(() => {
+      if (playingVideo === video) playingVideo = null;
+    });
+  };
+
+  const pauseVideo = video => {
+    video.pause();
+    if (playingVideo === video) playingVideo = null;
   };
 
   if (projectItems.length > 0 && projectVideos.length > 0 && projectLayout && browserContent) {
     let currentActive = 0;
-    let inlineVideoObserver;
 
     const switchProject = (index) => {
       if (index === currentActive) return;
@@ -132,14 +146,17 @@ document.addEventListener('DOMContentLoaded', () => {
       projectVideos.forEach((video, i) => {
         if (i === index) {
           video.classList.add('active');
-          if (projectDisplay?.dataset.visible === 'true') playVideo(video);
         } else {
           video.classList.remove('active');
-          video.pause();
+          pauseVideo(video);
         }
       });
 
       currentActive = index;
+      if (videoObserver && shouldUseVisibilityPlayback()) {
+        videoObserver.unobserve(projectVideos[index]);
+        videoObserver.observe(projectVideos[index]);
+      }
     };
 
     // Initialize: activate first project
@@ -165,24 +182,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     projectItems.forEach(item => projectObserver.observe(item));
 
-    const displayObserver = projectDisplay && new IntersectionObserver(entries => {
-      entries.forEach(entry => {
-        projectDisplay.dataset.visible = entry.isIntersecting.toString();
-        const activeVideo = projectVideos[currentActive];
-        if (entry.isIntersecting && !isInlineLayout()) {
-          playVideo(activeVideo);
-        } else {
-          activeVideo?.pause();
-        }
-      });
-    }, { threshold: 0.1 });
-
-    if (projectDisplay) displayObserver?.observe(projectDisplay);
-
     const handleResize = () => {
       if (isInlineLayout()) {
         projectLayout.classList.add('projects-layout--inline');
-        inlineVideoObserver?.disconnect();
 
         projectItems.forEach((item, index) => {
           const slot = item.querySelector('.project-video-slot');
@@ -192,31 +194,13 @@ document.addEventListener('DOMContentLoaded', () => {
             video.classList.add('active');
           }
         });
-
-        inlineVideoObserver = new IntersectionObserver(entries => {
-          entries.forEach(entry => {
-            if (entry.isIntersecting) {
-              playVideo(entry.target);
-            } else {
-              entry.target.pause();
-            }
-          });
-        }, { threshold: 0.25 });
-
-        projectVideos.forEach(video => inlineVideoObserver.observe(video));
       } else {
-        inlineVideoObserver?.disconnect();
         projectLayout.classList.remove('projects-layout--inline');
         projectVideos.forEach(video => browserContent.append(video));
-        projectVideos.forEach((v, i) => {
-          v.classList.toggle('active', i === currentActive);
-          if (i !== currentActive || projectDisplay?.dataset.visible !== 'true') {
-            v.pause();
-          }
+        projectVideos.forEach((video, index) => {
+          video.classList.toggle('active', index === currentActive);
+          pauseVideo(video);
         });
-        if (projectDisplay?.dataset.visible === 'true') {
-          playVideo(projectVideos[currentActive]);
-        }
       }
     };
 
@@ -224,19 +208,58 @@ document.addEventListener('DOMContentLoaded', () => {
     handleResize();
   }
 
-  const projectCardVideos = document.querySelectorAll('.project-card-video video');
-  if (projectCardVideos.length > 0) {
-    const cardVideoObserver = new IntersectionObserver(entries => {
+  const isMobileViewport = () => window.innerWidth <= 768;
+  const supportsHover = () => window.matchMedia('(any-hover: hover)').matches;
+  const shouldUseVisibilityPlayback = () => isMobileViewport()
+    || (window.innerWidth <= 1024 && !supportsHover());
+
+  previewVideos.forEach(video => {
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+
+    video.addEventListener('pointerenter', event => {
+      if (
+        !isMobileViewport()
+        && supportsHover()
+        && event.pointerType !== 'touch'
+        && (!video.matches('.project-video') || video.classList.contains('active'))
+      ) {
+        playVideo(video);
+      }
+    });
+
+    video.addEventListener('pointerleave', event => {
+      if (!isMobileViewport() && supportsHover() && event.pointerType !== 'touch') {
+        pauseVideo(video);
+      }
+    });
+  });
+
+  if (previewVideos.length > 0) {
+    videoObserver = new IntersectionObserver(entries => {
+      if (!shouldUseVisibilityPlayback()) return;
+
       entries.forEach(entry => {
-        if (entry.isIntersecting) {
+        if (entry.target.matches('.project-video') && !entry.target.classList.contains('active')) {
+          return;
+        }
+
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.5) {
           playVideo(entry.target);
         } else {
-          entry.target.pause();
+          pauseVideo(entry.target);
         }
       });
-    }, { threshold: 0.25 });
+    }, { threshold: 0.5 });
 
-    projectCardVideos.forEach(video => cardVideoObserver.observe(video));
+    previewVideos.forEach(video => videoObserver.observe(video));
+
+    window.addEventListener('resize', () => {
+      if (playingVideo) pauseVideo(playingVideo);
+      videoObserver.disconnect();
+      previewVideos.forEach(video => videoObserver.observe(video));
+    }, { passive: true });
   }
 
   // ==========================================

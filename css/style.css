@@ -1120,11 +1120,13 @@ p {
   height: 100%;
   object-fit: contain;
   opacity: 0;
+  pointer-events: none;
   transition: opacity 0.4s ease;
 }
 
 .project-video.active {
   opacity: 1;
+  pointer-events: auto;
 }
 
 .project-video-slot:empty {
